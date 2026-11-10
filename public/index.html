@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b12">
+  <title>DJ Song Requester</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      </div>
+      <div>
+        <p class="eyebrow">Song-Wünsche</p>
+        <h1 id="eventName">DJ Song Requester</h1>
+      </div>
+    </header>
+
+    <div id="closedNotice" class="notice hidden">Song-Wünsche sind gerade geschlossen – du kannst aber weiterhin die Liste ansehen.</div>
+    <div id="demoNotice" class="notice hidden">Demo-Modus: Die Suche liefert Beispielsongs (keine Spotify-Zugangsdaten hinterlegt).</div>
+
+    <section class="search" id="searchSection">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" class="input" type="search" placeholder="Song oder Interpret suchen …" autocomplete="off" enterkeyhint="search" aria-label="Song suchen">
+        <button id="clear" class="search-clear hidden" type="button" aria-label="Suche leeren">✕</button>
+      </div>
+      <div id="results" class="results hidden" role="listbox"></div>
+    </section>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="open" role="tab">Wunschliste <span class="count" id="countOpen"></span></button>
+      <button class="tab" data-tab="played" role="tab">Gespielt <span class="count" id="countPlayed"></span></button>
+    </nav>
+    <div id="list" class="list"><div class="empty">Lade …</div></div>
+    <p class="hint">Gib Songs, die du auch hören willst, ein ♥ – je mehr Herzen, desto weiter oben landet der Song beim DJ.</p>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/common.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

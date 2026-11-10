@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b12">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin · DJ Song Requester</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="loginView" class="hidden">
+    <form id="loginForm" class="login" autocomplete="on">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div><p class="eyebrow">Admin</p><h1>DJ Song Requester</h1></div>
+      </div>
+      <div class="field"><label for="username">Benutzername</label><input id="username" class="input" name="username" autocomplete="username" required></div>
+      <div class="field"><label for="password">Passwort</label><input id="password" class="input" name="password" type="password" autocomplete="current-password" required></div>
+      <p id="loginError" class="error-text" role="alert"></p>
+      <button class="btn primary" type="submit" id="loginBtn">Anmelden</button>
+    </form>
+  </section>
+
+  <!-- Panel -->
+  <main id="panel" class="wrap wide hidden">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div><p class="eyebrow">DJ-Pult</p><h1 id="eventName">DJ Song Requester</h1></div>
+      </div>
+      <div class="toolbar">
+        <button id="btnQr" class="btn" type="button">QR-Code</button>
+        <a class="btn" href="/" target="_blank" rel="noopener">Gästeseite</a>
+        <button id="btnSettings" class="btn" type="button">Einstellungen</button>
+        <button id="btnLogout" class="btn ghost" type="button">Abmelden</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="v" id="stOpen">0</div><div class="l">Offen</div></div>
+      <div class="stat"><div class="v" id="stPlayed">0</div><div class="l">Gespielt</div></div>
+      <div class="stat"><div class="v" id="stTotal">0</div><div class="l">Songs gesamt</div></div>
+      <div class="stat"><div class="v" id="stVotes">0</div><div class="l">Stimmen</div></div>
+    </div>
+
+    <div class="row-between">
+      <label class="switch"><input id="requestsOpen" type="checkbox"> <span id="requestsOpenLabel">Wünsche offen</span></label>
+    </div>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="open">Offen <span class="count" id="cOpen"></span></button>
+      <button class="tab" data-tab="played">Gespielt <span class="count" id="cPlayed"></span></button>
+      <button class="tab" data-tab="all">Alle</button>
+    </nav>
+    <div id="list" class="list"><div class="empty">Lade …</div></div>
+  </main>
+
+  <!-- QR-Dialog -->
+  <dialog id="dlgQr">
+    <div class="dlg-head"><h2>QR-Code für Gäste</h2><button class="icon-btn" data-close type="button" aria-label="Schließen">✕</button></div>
+    <div class="dlg-body">
+      <div class="qr-preview"><img id="qrImg" alt="QR-Code"></div>
+      <div class="url-box" id="qrUrl"></div>
+      <div class="field">
+        <label for="qrSize">Größe (PNG)</label>
+        <select id="qrSize" class="input">
+          <option value="512">512 × 512 px</option>
+          <option value="1024" selected>1024 × 1024 px</option>
+          <option value="2048">2048 × 2048 px (Druck)</option>
+          <option value="4096">4096 × 4096 px (Poster)</option>
+        </select>
+      </div>
+      <div class="toolbar">
+        <a id="qrPng" class="btn primary" href="#">PNG herunterladen</a>
+        <a id="qrSvg" class="btn" href="#">SVG herunterladen</a>
+      </div>
+      <p class="hint">Stimmt die Adresse nicht (z. B. hinter einem Reverse Proxy)? In den Einstellungen die öffentliche URL festlegen.</p>
+    </div>
+  </dialog>
+
+  <!-- Einstellungen -->
+  <dialog id="dlgSettings">
+    <div class="dlg-head"><h2>Einstellungen</h2><button class="icon-btn" data-close type="button" aria-label="Schließen">✕</button></div>
+    <div class="dlg-body">
+      <form id="settingsForm">
+        <div class="field"><label for="setEventName">Name der Veranstaltung</label><input id="setEventName" class="input" maxlength="80"></div>
+        <div class="field"><label for="setPublicUrl">Öffentliche URL der Gästeseite (leer = automatisch)</label><input id="setPublicUrl" class="input" placeholder="https://songs.example.com/"></div>
+        <button class="btn primary" type="submit">Speichern</button>
+      </form>
+
+      <div class="section mt">
+        <h3>Passwort ändern</h3>
+        <form id="pwForm">
+          <div class="field"><label for="pwCurrent">Aktuelles Passwort</label><input id="pwCurrent" class="input" type="password" autocomplete="current-password" required></div>
+          <div class="field"><label for="pwNew">Neues Passwort (min. 8 Zeichen)</label><input id="pwNew" class="input" type="password" autocomplete="new-password" minlength="8" required></div>
+          <div class="field"><label for="pwNew2">Neues Passwort wiederholen</label><input id="pwNew2" class="input" type="password" autocomplete="new-password" minlength="8" required></div>
+          <button class="btn" type="submit">Passwort ändern</button>
+        </form>
+      </div>
+
+      <div class="section mt">
+        <h3>Liste aufräumen</h3>
+        <div class="toolbar">
+          <button id="resetPlayed" class="btn" type="button">Gespielte löschen</button>
+          <button id="resetAll" class="btn danger" type="button">Alles löschen (neues Event)</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/common.js"></script>
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

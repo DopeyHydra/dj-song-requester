@@ -1,0 +1,16 @@
+name: dj-song-requester
+
+services:
+  app:
+    build: .
+    image: dopeyhydra/dj_song_requester:latest
+    container_name: dj-song-requester
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    volumes:
+      - dj-song-requester-data:/data
+
+volumes:
+  dj-song-requester-data:

@@ -1,0 +1,17 @@
+{
+  "name": "dj-song-requester",
+  "version": "1.0.0",
+  "description": "DJ Song Requester – Gäste wünschen Songs per QR-Code, der DJ verwaltet sie im Admin-Panel",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node src/server.js",
+    "reset-password": "node src/cli.js reset-password"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
+  }
+}
