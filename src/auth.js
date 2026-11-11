@@ -42,12 +42,20 @@ function upsertAdmin(username, password) {
   db.prepare('DELETE FROM sessions WHERE admin_id = ?').run(admin.id);
 }
 
-function ensureInitialAdmin() {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM admins').get().c;
-  if (count > 0) return;
+/**
+ * Legt beim ersten Start den lokalen Admin an.
+ * Rückgabe: true, wenn der Passwort-Login nutzbar ist.
+ */
+function ensureInitialAdmin({ oidcEnabled }) {
+  const count = db.prepare(`SELECT COUNT(*) AS c FROM admins WHERE kind = 'local'`).get().c;
+  if (count > 0) return true;
   const username = (process.env.ADMIN_USERNAME || 'admin').trim();
   const password = process.env.ADMIN_PASSWORD;
   if (!password || password.length < 8) {
+    if (oidcEnabled) {
+      console.log('[auth] Kein lokaler Admin angelegt (ADMIN_PASSWORD leer) – Anmeldung nur per OIDC.');
+      return false;
+    }
     console.error(
       '[auth] Kein Admin vorhanden. Bitte ADMIN_PASSWORD (min. 8 Zeichen) in der .env setzen und neu starten.'
     );
@@ -56,10 +64,22 @@ function ensureInitialAdmin() {
   upsertAdmin(username, password);
   console.log(`[auth] Admin "${username}" angelegt (Passwort als scrypt-Hash gespeichert).`);
   console.log('[auth] Tipp: ADMIN_PASSWORD kann jetzt aus der .env entfernt werden.');
+  return true;
+}
+
+// OIDC-Benutzer werden als eigene Admin-Zeilen geführt (ohne nutzbares Passwort).
+function upsertOidcAdmin(sub, displayName) {
+  const username = `oidc:${sub}`;
+  db.prepare(
+    `INSERT INTO admins (username, password_hash, kind, display_name) VALUES (?, '!', 'oidc', ?)
+     ON CONFLICT(username) DO UPDATE SET display_name = excluded.display_name`
+  ).run(username, displayName);
+  return db.prepare('SELECT id FROM admins WHERE username = ?').get(username).id;
 }
 
 function checkLogin(username, password) {
-  const admin = db.prepare('SELECT id, password_hash FROM admins WHERE username = ?').get(String(username || ''));
+  const admin = db.prepare(`SELECT id, password_hash FROM admins WHERE username = ? AND kind = 'local'`)
+    .get(String(username || ''));
   const ok = verifyPassword(String(password || ''), admin ? admin.password_hash : DUMMY_HASH);
   return ok && admin ? admin.id : null;
 }
@@ -67,23 +87,30 @@ function checkLogin(username, password) {
 // ---- Sessions ----------------------------------------------------------------
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-function createSession(adminId) {
+function createSession(adminId, idToken = null) {
   const token = crypto.randomBytes(32).toString('base64url');
-  db.prepare('INSERT INTO sessions (token_hash, admin_id, expires_at) VALUES (?, ?, ?)').run(
-    sha256(token), adminId, Date.now() + SESSION_TTL_MS
+  db.prepare('INSERT INTO sessions (token_hash, admin_id, expires_at, id_token) VALUES (?, ?, ?, ?)').run(
+    sha256(token), adminId, Date.now() + SESSION_TTL_MS, idToken
   );
   return token;
 }
 
+/** Löscht die Session und gibt sie zurück (für den OIDC-Logout wird das ID-Token gebraucht). */
 function destroySession(token) {
-  if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
+  if (!token) return null;
+  const row = db.prepare(
+    `SELECT s.id_token AS idToken, a.kind FROM sessions s JOIN admins a ON a.id = s.admin_id WHERE s.token_hash = ?`
+  ).get(sha256(token));
+  db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
+  return row || null;
 }
 
 function getSessionAdmin(token) {
   if (!token) return null;
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   return db.prepare(
-    `SELECT a.id, a.username FROM sessions s JOIN admins a ON a.id = s.admin_id
+    `SELECT a.id, a.username, a.kind, COALESCE(a.display_name, a.username) AS displayName
+     FROM sessions s JOIN admins a ON a.id = s.admin_id
      WHERE s.token_hash = ? AND s.expires_at >= ?`
   ).get(sha256(token), Date.now()) || null;
 }
@@ -106,7 +133,7 @@ function registerSuccess(ip) {
 
 module.exports = {
   SESSION_COOKIE, SESSION_TTL_MS,
-  hashPassword, verifyPassword, upsertAdmin, ensureInitialAdmin, checkLogin,
+  hashPassword, verifyPassword, upsertAdmin, upsertOidcAdmin, ensureInitialAdmin, checkLogin,
   createSession, destroySession, getSessionAdmin,
   loginBlocked, registerFailure, registerSuccess,
 };

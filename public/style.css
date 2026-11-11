@@ -51,6 +51,7 @@ h2 { font-size: 18px; margin: 0; }
 
 /* ---------- Buttons / Inputs ---------- */
 .btn {
+  text-decoration: none;
   border: 1px solid var(--line); background: var(--card-2); border-radius: 10px;
   padding: 9px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
   transition: background .15s, border-color .15s, transform .05s; white-space: nowrap;
@@ -166,7 +167,8 @@ h2 { font-size: 18px; margin: 0; }
 
 .login { max-width: 380px; margin: 12vh auto 0; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px; box-shadow: var(--shadow); }
 .login .brand { margin-bottom: 22px; }
-.error-text { color: var(--danger); font-size: 14px; min-height: 20px; margin: 0 0 10px; }
+.error-text { color: var(--danger); font-size: 14px; margin: 0 0 12px; }
+.error-text:empty { display: none; }
 
 dialog {
   background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 18px;
@@ -187,6 +189,9 @@ dialog::backdrop { background: rgba(5, 5, 10, .7); backdrop-filter: blur(3px); }
   .cover { width: 44px; height: 44px; }
   .song { gap: 10px; padding: 10px; }
 }
-#loginBtn { width: 100%; justify-content: center; }
+.login-btn { width: 100%; justify-content: center; }
+.login form { margin: 0; }
+.divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; margin: 18px 0; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .section.mt { margin-top: 20px; }
 select.input { appearance: none; cursor: pointer; }

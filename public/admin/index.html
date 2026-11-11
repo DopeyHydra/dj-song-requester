@@ -12,18 +12,22 @@
 <body>
   <!-- Login -->
   <section id="loginView" class="hidden">
-    <form id="loginForm" class="login" autocomplete="on">
+    <div class="login">
       <div class="brand">
         <div class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         </div>
         <div><p class="eyebrow">Admin</p><h1>DJ Song Requester</h1></div>
       </div>
-      <div class="field"><label for="username">Benutzername</label><input id="username" class="input" name="username" autocomplete="username" required></div>
-      <div class="field"><label for="password">Passwort</label><input id="password" class="input" name="password" type="password" autocomplete="current-password" required></div>
       <p id="loginError" class="error-text" role="alert"></p>
-      <button class="btn primary" type="submit" id="loginBtn">Anmelden</button>
-    </form>
+      <a id="oidcBtn" class="btn primary login-btn hidden" href="/api/admin/oidc/login">Mit SSO anmelden</a>
+      <div id="loginDivider" class="divider hidden"><span>oder</span></div>
+      <form id="loginForm" class="hidden" autocomplete="on">
+        <div class="field"><label for="username">Benutzername</label><input id="username" class="input" name="username" autocomplete="username" required></div>
+        <div class="field"><label for="password">Passwort</label><input id="password" class="input" name="password" type="password" autocomplete="current-password" required></div>
+        <button class="btn primary login-btn" type="submit" id="loginBtn">Anmelden</button>
+      </form>
+    </div>
   </section>
 
   <!-- Panel -->
@@ -33,7 +37,7 @@
         <div class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
         </div>
-        <div><p class="eyebrow">DJ-Pult</p><h1 id="eventName">DJ Song Requester</h1></div>
+        <div><p class="eyebrow">DJ-Pult · <span id="whoami"></span></p><h1 id="eventName">DJ Song Requester</h1></div>
       </div>
       <div class="toolbar">
         <button id="btnQr" class="btn" type="button">QR-Code</button>
@@ -95,7 +99,7 @@
         <button class="btn primary" type="submit">Speichern</button>
       </form>
 
-      <div class="section mt">
+      <div class="section mt" id="pwSection">
         <h3>Passwort ändern</h3>
         <form id="pwForm">
           <div class="field"><label for="pwCurrent">Aktuelles Passwort</label><input id="pwCurrent" class="input" type="password" autocomplete="current-password" required></div>

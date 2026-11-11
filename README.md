@@ -15,6 +15,7 @@ Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen
 
 **Admin-Panel** (`/admin`)
 - Login mit Benutzername und Passwort. Das Passwort wird als gesalzener **scrypt-Hash** gespeichert, die Session-Tokens nur gehasht. Nach 5 Fehlversuchen wird der Login gebremst.
+- Optional **Single Sign-On per OpenID Connect**, z. B. mit Keycloak. Freigabe über eine Rolle oder einzelne Benutzer, Abmeldung auch beim Identity Provider ([Anleitung](#anmeldung-mit-keycloak-oidc)).
 - Beliebtheits-Counter pro Song, aufgeteilt in „x× gewünscht · y ♥“
 - Songs als gespielt abhaken (und den Haken wieder entfernen), Songs löschen, direkt in Spotify öffnen
 - Wünsche öffnen oder schließen
@@ -72,6 +73,77 @@ docker compose up -d
 ```
 Wünsche, Likes und der Admin-Zugang bleiben dabei im Volume erhalten.
 
+## Anmeldung mit Keycloak (OIDC)
+
+Statt mit Benutzername und Passwort kannst du dich am Admin-Panel über Keycloak anmelden. Andere OIDC-Anbieter (Authentik, Authelia, Zitadel, Entra ID …) funktionieren genauso. Nur die Menüs heißen dort anders.
+
+In den Beispielen unten gilt:
+- `https://songs.example.com` ist die Adresse des DJ Song Requesters.
+- `https://auth.example.com` ist dein Keycloak, `meinrealm` dein Realm.
+
+### 1. Client in Keycloak anlegen
+
+Keycloak-Admin-Konsole → deinen Realm auswählen → **Clients** → **Create client**
+
+| Schritt | Feld | Wert |
+|---|---|---|
+| General settings | Client type | `OpenID Connect` |
+| | Client ID | `dj-song-requester` |
+| Capability config | Client authentication | **On** |
+| | Authorization | Off |
+| | Authentication flow | nur **Standard flow** anhaken (Direct access grants, Implicit flow usw. aus) |
+| Login settings | Root URL | `https://songs.example.com` |
+| | Valid redirect URIs | `https://songs.example.com/api/admin/oidc/callback` |
+| | Valid post logout redirect URIs | `https://songs.example.com/admin/*` |
+| | Web origins | leer lassen |
+
+Danach **Save**.
+
+- Im Tab **Credentials** das **Client secret** kopieren.
+- Optional, aber empfohlen: im Tab **Advanced** unter „Advanced settings“ die Option **Proof Key for Code Exchange Code Challenge Method** auf `S256` stellen. Die App nutzt PKCE ohnehin.
+
+> Rufst du das Admin-Panel auch über eine andere Adresse auf (z. B. `http://192.168.1.10:3000`), trag diese zusätzlich bei den Redirect-URIs ein. Die Callback-URL ergibt sich immer aus der Adresse, über die du das Panel öffnest.
+
+### 2. Rolle anlegen und zuweisen
+
+1. **Realm roles** → **Create role** → Role name: `dj-admin` → Save.
+2. **Users** → deinen Benutzer öffnen → Tab **Role mapping** → **Assign role**.
+3. Oben links den Filter auf **Filter by realm roles** stellen, `dj-admin` anhaken → **Assign**.
+
+Mehrere DJs: Leg eine Gruppe an (z. B. „DJs“), gib der Gruppe unter *Role mapping* die Rolle `dj-admin` und füge die Benutzer zur Gruppe hinzu.
+
+Lieber eine **Client-Rolle**? Leg die Rolle unter *Clients → dj-song-requester → Roles* an und setze in der `.env` `OIDC_ROLES_CLAIM=resource_access.dj-song-requester.roles`.
+
+### 3. `.env` ergänzen
+
+```env
+OIDC_ISSUER=https://auth.example.com/realms/meinrealm
+OIDC_CLIENT_ID=dj-song-requester
+OIDC_CLIENT_SECRET=<Client secret aus dem Tab Credentials>
+OIDC_ALLOWED_ROLES=dj-admin
+OIDC_BUTTON_LABEL=Mit Keycloak anmelden
+```
+
+Dann neu starten mit `docker compose up -d`. Auf der Login-Seite erscheint jetzt der Button „Mit Keycloak anmelden“.
+
+- **Den Issuer findest du so:** Öffne `<OIDC_ISSUER>/.well-known/openid-configuration` im Browser. Wenn JSON kommt, stimmt die Adresse. Bei sehr alten Keycloak-Versionen (vor 17) steht noch `/auth` im Pfad: `https://auth.example.com/auth/realms/meinrealm`.
+- **Der Container muss Keycloak unter genau dieser Adresse erreichen.** Laufen beide auf demselben Server, darf die Domain also nicht nur von außen auflösbar sein. Testen kannst du das mit `docker compose exec app node -e "fetch(process.env.OIDC_ISSUER+'/.well-known/openid-configuration').then(r=>console.log(r.status))"`. Das sollte `200` ausgeben.
+- **Nur noch SSO:** Wenn der Keycloak-Login funktioniert, kannst du den Passwort-Login mit `PASSWORD_LOGIN=false` abschalten. `ADMIN_PASSWORD` wird dann nicht mehr gebraucht.
+- **Statt einer Rolle** kannst du auch einzelne Benutzer freigeben: `OIDC_ALLOWED_USERS=anna,ben@example.com`. Verglichen werden Benutzername und E-Mail.
+- **Ohne jede Einschränkung** (jeder Benutzer des Realms darf rein) startet die App nur, wenn du das ausdrücklich mit `OIDC_ALLOW_ALL_USERS=true` erlaubst.
+
+### Fehlersuche
+
+Die genaue Ursache steht immer im Log (`docker compose logs app`).
+
+| Meldung im Panel | Ursache |
+|---|---|
+| „Dein Konto hat keine Berechtigung …“ | Dem Benutzer fehlt die Rolle aus `OIDC_ALLOWED_ROLES`, oder `OIDC_ROLES_CLAIM` zeigt auf die falsche Stelle (Realm- vs. Client-Rolle). Neu anmelden, nachdem die Rolle zugewiesen wurde. |
+| „Der Anmeldedienst ist gerade nicht erreichbar.“ | Der Container erreicht `OIDC_ISSUER` nicht, oder die Adresse ist falsch (siehe Test oben). |
+| Keycloak zeigt „Invalid parameter: redirect_uri“ | Die Callback-URL fehlt unter *Valid redirect URIs*. Hinter einem Reverse Proxy muss außerdem `X-Forwarded-Proto` gesetzt sein, sonst entsteht `http://` statt `https://`. Notfalls `OIDC_REDIRECT_URI` fest setzen. |
+| „Die Antwort des Anmeldedienstes war ungültig.“ | Meist ein falsches `OIDC_CLIENT_SECRET` oder ein Issuer mit abweichender Schreibweise. |
+| Nach dem Abmelden bleibt Keycloak auf einer Fehlerseite | `https://songs.example.com/admin/*` fehlt unter *Valid post logout redirect URIs*. |
+
 ## Hosting hinter einem Reverse Proxy (empfohlen: HTTPS)
 
 Beispiel für **Caddy**:
@@ -116,6 +188,16 @@ docker compose exec app node src/cli.js reset-password admin MeinNeuesPasswort
 | `REQUEST_LIMIT_WINDOW_MINUTES` | `15` | … innerhalb dieser Minuten |
 | `COOKIE_SECURE` | `auto` | `auto` / `true` / `false` |
 | `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Express-Einstellung „trust proxy“ |
+| `OIDC_ISSUER` | – | Realm-URL des Identity Providers. Schaltet OIDC ein. |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Client-Zugangsdaten. Ohne Secret wird ein Public Client mit PKCE angenommen. |
+| `OIDC_ALLOWED_ROLES` | – | Rollen mit Zugriff (Komma-getrennt) |
+| `OIDC_ALLOWED_USERS` | – | Benutzernamen/E-Mails mit Zugriff (Komma-getrennt) |
+| `OIDC_ALLOW_ALL_USERS` | `false` | Jeder Benutzer des Realms darf ins Panel |
+| `OIDC_ROLES_CLAIM` | `realm_access.roles` | Pfad der Rollen im Token |
+| `OIDC_SCOPES` | `openid profile email` | Angeforderte Scopes |
+| `OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | Beschriftung des Login-Buttons |
+| `OIDC_REDIRECT_URI` | automatisch | Feste Callback-URL |
+| `PASSWORD_LOGIN` | `true` | `false` = nur OIDC-Login |
 
 ## Daten & Backup
 

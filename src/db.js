@@ -55,6 +55,15 @@ db.exec(`
   );
 `);
 
+// ---- Migrationen für bestehende Datenbanken ----
+function addColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+addColumn('admins', 'kind', "TEXT NOT NULL DEFAULT 'local'"); // 'local' | 'oidc'
+addColumn('admins', 'display_name', 'TEXT');
+addColumn('sessions', 'id_token', 'TEXT');
+
 function getSetting(key, fallback = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : fallback;

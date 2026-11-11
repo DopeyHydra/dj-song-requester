@@ -5,19 +5,40 @@ const $ = (id) => document.getElementById(id);
 const state = { tab: 'open', items: [], settings: null, started: false };
 
 // ---------- Login ----------
+const LOGIN_ERRORS = {
+  forbidden: 'Dein Konto hat keine Berechtigung für das Admin-Panel.',
+  state: 'Die Anmeldung ist abgelaufen oder wurde in einem anderen Browser gestartet. Bitte erneut versuchen.',
+  token: 'Die Antwort des Anmeldedienstes war ungültig. Details stehen im Server-Log.',
+  provider: 'Die Anmeldung wurde abgebrochen oder vom Anmeldedienst abgelehnt.',
+  oidc_unavailable: 'Der Anmeldedienst ist gerade nicht erreichbar.',
+};
+
 async function init() {
+  // Fehler aus dem SSO-Rücksprung anzeigen und aus der Adresszeile entfernen
+  const params = new URLSearchParams(location.search);
+  const error = params.get('error');
+  if (error) history.replaceState(null, '', location.pathname);
+
   try {
-    await api('/api/admin/me');
+    const me = await api('/api/admin/me');
+    state.me = me;
     showPanel();
   } catch {
-    showLogin();
+    await showLogin();
+    if (error) $('loginError').textContent = LOGIN_ERRORS[error] || 'Anmeldung fehlgeschlagen.';
   }
 }
 
-function showLogin() {
+async function showLogin() {
   $('panel').classList.add('hidden');
   $('loginView').classList.remove('hidden');
-  $('username').focus();
+  let cfg = { password: true, oidc: false };
+  try { cfg = await api('/api/admin/auth-config'); } catch { /* Standard verwenden */ }
+  $('oidcBtn').textContent = cfg.oidcLabel || 'Mit SSO anmelden';
+  $('oidcBtn').classList.toggle('hidden', !cfg.oidc);
+  $('loginForm').classList.toggle('hidden', !cfg.password);
+  $('loginDivider').classList.toggle('hidden', !(cfg.oidc && cfg.password));
+  if (cfg.password && !cfg.oidc) $('username').focus();
 }
 
 $('loginForm').addEventListener('submit', async (e) => {
@@ -26,6 +47,7 @@ $('loginForm').addEventListener('submit', async (e) => {
   try {
     await api('/api/admin/login', { method: 'POST', body: { username: $('username').value, password: $('password').value } });
     $('password').value = '';
+    state.me = await api('/api/admin/me');
     showPanel();
   } catch (err) {
     $('loginError').textContent = err.message;
@@ -33,13 +55,17 @@ $('loginForm').addEventListener('submit', async (e) => {
 });
 
 $('btnLogout').addEventListener('click', async () => {
-  await api('/api/admin/logout', { method: 'POST', body: {} }).catch(() => {});
-  location.reload();
+  const r = await api('/api/admin/logout', { method: 'POST', body: {} }).catch(() => null);
+  // Bei SSO auch beim Identity Provider abmelden
+  if (r && r.redirect) location.href = r.redirect;
+  else location.reload();
 });
 
 async function showPanel() {
   $('loginView').classList.add('hidden');
   $('panel').classList.remove('hidden');
+  $('whoami').textContent = state.me ? state.me.username : '';
+  $('pwSection').classList.toggle('hidden', !(state.me && state.me.canChangePassword));
   await Promise.all([loadSettings(), loadList()]);
   if (!state.started) {
     state.started = true;

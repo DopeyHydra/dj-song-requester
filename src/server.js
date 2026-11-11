@@ -8,6 +8,7 @@ const { db, getSetting, setSetting, transaction } = require('./db');
 const auth = require('./auth');
 const spotify = require('./spotify');
 const demo = require('./demo');
+const oidc = require('./oidc');
 
 const PORT = Number(process.env.PORT || 3000);
 const DEMO_MODE = /^(1|true|yes)$/i.test(process.env.DEMO_MODE || '');
@@ -15,7 +16,14 @@ const REQUEST_LIMIT = Number(process.env.REQUEST_LIMIT_PER_GUEST || 5); // neue 
 const REQUEST_WINDOW_MIN = Number(process.env.REQUEST_LIMIT_WINDOW_MINUTES || 15); // ... pro Zeitfenster
 const VISITOR_COOKIE = 'djsr_vid';
 
-auth.ensureInitialAdmin();
+oidc.checkConfig();
+const PASSWORD_LOGIN_WANTED = !/^(0|false|no)$/i.test(process.env.PASSWORD_LOGIN || 'true');
+if (!PASSWORD_LOGIN_WANTED && !oidc.enabled) {
+  console.error('[auth] PASSWORD_LOGIN=false geht nur zusammen mit OIDC (OIDC_ISSUER/OIDC_CLIENT_ID).');
+  process.exit(1);
+}
+const PASSWORD_LOGIN = PASSWORD_LOGIN_WANTED && auth.ensureInitialAdmin({ oidcEnabled: oidc.enabled });
+if (!PASSWORD_LOGIN) console.log('[auth] Passwort-Login ist deaktiviert.');
 if (!spotify.isConfigured() && !DEMO_MODE) {
   console.warn('[spotify] SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET fehlen – die Songsuche ist deaktiviert.');
 }
@@ -262,7 +270,22 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function setSessionCookie(req, res, token) {
+  const parts = [`${auth.SESSION_COOKIE}=${token}`, 'Path=/api/admin', 'HttpOnly', 'SameSite=Strict',
+    `Max-Age=${auth.SESSION_TTL_MS / 1000}`];
+  if (cookieSecure(req)) parts.push('Secure');
+  res.append('Set-Cookie', parts.join('; '));
+}
+
+const requestOrigin = (req) => `${req.protocol}://${req.get('host')}`;
+
+// Welche Anmeldearten die Login-Seite anzeigen soll
+app.get('/api/admin/auth-config', (req, res) => {
+  res.json({ password: PASSWORD_LOGIN, oidc: oidc.enabled, oidcLabel: oidc.BUTTON_LABEL });
+});
+
 app.post('/api/admin/login', (req, res) => {
+  if (!PASSWORD_LOGIN) return res.status(403).json({ error: 'Passwort-Login ist deaktiviert.' });
   const wait = auth.loginBlocked(req.ip);
   if (wait) return res.status(429).json({ error: `Zu viele Fehlversuche. Bitte ${wait} s warten.` });
   const { username, password } = req.body || {};
@@ -272,23 +295,64 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ error: 'Benutzername oder Passwort falsch.' });
   }
   auth.registerSuccess(req.ip);
-  const token = auth.createSession(adminId);
-  const parts = [`${auth.SESSION_COOKIE}=${token}`, 'Path=/api/admin', 'HttpOnly', 'SameSite=Strict',
-    `Max-Age=${auth.SESSION_TTL_MS / 1000}`];
-  if (cookieSecure(req)) parts.push('Secure');
-  res.append('Set-Cookie', parts.join('; '));
+  setSessionCookie(req, res, auth.createSession(adminId));
   res.json({ ok: true });
 });
 
-app.post('/api/admin/logout', (req, res) => {
-  auth.destroySession(req.cookies[auth.SESSION_COOKIE]);
+// ---- OIDC (z. B. Keycloak) ----
+const OIDC_FLOW_COOKIE = 'djsr_oidc';
+const oidcRedirectUri = (req) => oidc.REDIRECT_URI || `${requestOrigin(req)}/api/admin/oidc/callback`;
+
+app.get('/api/admin/oidc/login', asyncRoute(async (req, res) => {
+  if (!oidc.enabled) return res.status(404).json({ error: 'OIDC ist nicht konfiguriert.' });
+  try {
+    const { url, browserKey } = await oidc.buildLoginUrl(oidcRedirectUri(req));
+    const parts = [`${OIDC_FLOW_COOKIE}=${browserKey}`, 'Path=/api/admin/oidc', 'HttpOnly', 'SameSite=Lax', 'Max-Age=600'];
+    if (cookieSecure(req)) parts.push('Secure');
+    res.append('Set-Cookie', parts.join('; '));
+    res.redirect(302, url);
+  } catch (err) {
+    console.error('[oidc]', err.message);
+    res.redirect(302, '/admin/?error=oidc_unavailable');
+  }
+}));
+
+app.get('/api/admin/oidc/callback', asyncRoute(async (req, res) => {
+  if (!oidc.enabled) return res.status(404).json({ error: 'OIDC ist nicht konfiguriert.' });
+  res.append('Set-Cookie', `${OIDC_FLOW_COOKIE}=; Path=/api/admin/oidc; HttpOnly; SameSite=Lax; Max-Age=0`);
+  try {
+    const user = await oidc.handleCallback(req.query, req.cookies[OIDC_FLOW_COOKIE]);
+    const adminId = auth.upsertOidcAdmin(user.sub, user.displayName);
+    setSessionCookie(req, res, auth.createSession(adminId, user.idToken));
+    console.log(`[oidc] Anmeldung: ${user.displayName}`);
+    res.redirect(302, '/admin/');
+  } catch (err) {
+    console.warn('[oidc] Anmeldung abgelehnt:', err.message);
+    const code = err instanceof oidc.OidcError ? err.code : 'oidc_unavailable';
+    res.redirect(302, `/admin/?error=${encodeURIComponent(code)}`);
+  }
+}));
+
+app.post('/api/admin/logout', asyncRoute(async (req, res) => {
+  const session = auth.destroySession(req.cookies[auth.SESSION_COOKIE]);
   res.append('Set-Cookie', `${auth.SESSION_COOKIE}=; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=0`);
-  res.json({ ok: true });
-});
+  let redirect = null;
+  if (session && session.kind === 'oidc' && oidc.enabled) {
+    redirect = await oidc.buildLogoutUrl(session.idToken, `${requestOrigin(req)}/admin/`);
+  }
+  res.json({ ok: true, redirect });
+}));
 
-app.get('/api/admin/me', requireAdmin, (req, res) => res.json({ username: req.admin.username }));
+app.get('/api/admin/me', requireAdmin, (req, res) => res.json({
+  username: req.admin.displayName,
+  kind: req.admin.kind,
+  canChangePassword: req.admin.kind === 'local' && PASSWORD_LOGIN,
+}));
 
 app.post('/api/admin/password', requireAdmin, (req, res) => {
+  if (req.admin.kind !== 'local' || !PASSWORD_LOGIN) {
+    return res.status(400).json({ error: 'Das Passwort wird bei SSO-Anmeldung im Identity Provider verwaltet.' });
+  }
   const { currentPassword, newPassword } = req.body || {};
   if (!auth.checkLogin(req.admin.username, currentPassword)) {
     return res.status(400).json({ error: 'Aktuelles Passwort ist falsch.' });
