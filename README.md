@@ -223,7 +223,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 Ein neues Image auf Docker Hub veröffentlichen:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.build.yml build
-docker compose push
+docker push dopeyhydra/dj_song_requester:latest
 ```
 
 Ohne Docker: `npm install`, dann `ADMIN_PASSWORD=… DEMO_MODE=true npm start`. Dafür ist Node.js 22.13 oder neuer nötig.
