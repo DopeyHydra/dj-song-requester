@@ -9,6 +9,7 @@ const auth = require('./auth');
 const spotify = require('./spotify');
 const demo = require('./demo');
 const oidc = require('./oidc');
+const { slugify, slugError, SLUG_RE } = require('./slug');
 
 const PORT = Number(process.env.PORT || 3000);
 const DEMO_MODE = /^(1|true|yes)$/i.test(process.env.DEMO_MODE || '');
@@ -27,8 +28,6 @@ if (!PASSWORD_LOGIN) console.log('[auth] Passwort-Login ist deaktiviert.');
 if (!spotify.isConfigured() && !DEMO_MODE) {
   console.warn('[spotify] SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET fehlen – die Songsuche ist deaktiviert.');
 }
-if (getSetting('eventName') === null) setSetting('eventName', process.env.EVENT_NAME || 'DJ Song Requester');
-if (getSetting('requestsOpen') === null) setSetting('requestsOpen', '1');
 
 const app = express();
 app.disable('x-powered-by');
@@ -53,7 +52,9 @@ function parseCookies(req) {
   const out = {};
   (req.headers.cookie || '').split(';').forEach((part) => {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i > 0) {
+      try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* ignorieren */ }
+    }
   });
   return out;
 }
@@ -64,8 +65,7 @@ function cookieSecure(req) {
 function setCookie(req, res, name, value, maxAgeSec) {
   const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAgeSec}`];
   if (cookieSecure(req)) parts.push('Secure');
-  const prev = res.getHeader('Set-Cookie') || [];
-  res.setHeader('Set-Cookie', [...[].concat(prev), parts.join('; ')]);
+  res.append('Set-Cookie', parts.join('; '));
 }
 
 app.use((req, res, next) => {
@@ -106,12 +106,15 @@ function rateLimit({ windowMs, max, key }) {
 const searchLimiter = rateLimit({ windowMs: 60_000, max: 40, key: (r) => r.ip });
 const writeLimiter = rateLimit({ windowMs: 60_000, max: 60, key: (r) => r.ip });
 
-// ---- Live-Updates (Server-Sent Events) ---------------------------------------
-const sseClients = new Set();
-function broadcast(type = 'changed') {
-  for (const res of sseClients) res.write(`event: ${type}\ndata: {}\n\n`);
+const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// ---- Live-Updates (Server-Sent Events), getrennt pro Event --------------------
+const sseClients = new Map(); // eventId -> Set<res>
+function broadcast(eventId, type = 'changed', data = {}) {
+  const msg = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients.get(eventId) || []) res.write(msg);
 }
-app.get('/api/events', (req, res) => {
+function openStream(req, res, eventId) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -119,12 +122,29 @@ app.get('/api/events', (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   res.write('retry: 5000\n\n');
-  sseClients.add(res);
+  if (!sseClients.has(eventId)) sseClients.set(eventId, new Set());
+  const set = sseClients.get(eventId);
+  set.add(res);
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
-});
+  req.on('close', () => {
+    clearInterval(ping);
+    set.delete(res);
+    if (!set.size) sseClients.delete(eventId);
+  });
+}
 
-// ---- Hilfsfunktionen ---------------------------------------------------------
+// ---- Events ------------------------------------------------------------------
+const eventCols = 'id, slug, name, requests_open AS requestsOpen, created_at AS createdAt';
+const mapEvent = (e) => (e ? { ...e, requestsOpen: Boolean(e.requestsOpen) } : null);
+const getEventBySlug = (slug) => mapEvent(db.prepare(`SELECT ${eventCols} FROM events WHERE slug = ?`).get(slug));
+const getEventById = (id) => mapEvent(db.prepare(`SELECT ${eventCols} FROM events WHERE id = ?`).get(Number(id)));
+
+function startEventId() {
+  const id = Number(getSetting('startEventId'));
+  return id && getEventById(id) ? id : null;
+}
+
+// ---- Songs -------------------------------------------------------------------
 const songListSql = `
   SELECT s.id, s.spotify_id AS spotifyId, s.title, s.artists, s.album, s.image_url AS imageUrl,
          s.spotify_url AS spotifyUrl, s.duration_ms AS durationMs, s.explicit, s.played,
@@ -136,11 +156,12 @@ const songListSql = `
          MAX(v.visitor_id = :vid AND v.kind = 'like') AS likedByMe,
          MAX(v.visitor_id = :vid AND v.kind = 'request') AS requestedByMe
   FROM songs s LEFT JOIN votes v ON v.song_id = s.id
+  WHERE s.event_id = :eid
   GROUP BY s.id
   ORDER BY s.played ASC, votes DESC, s.requested_at ASC`;
 
-function listSongs(visitorId) {
-  return db.prepare(songListSql).all({ vid: visitorId || '' }).map((r) => ({
+function listSongs(eventId, visitorId) {
+  return db.prepare(songListSql).all({ eid: eventId, vid: visitorId || '' }).map((r) => ({
     ...r,
     explicit: Boolean(r.explicit),
     played: Boolean(r.played),
@@ -158,21 +179,29 @@ function publicSong(s) {
   return rest;
 }
 
-function publicConfig() {
-  return {
-    eventName: getSetting('eventName'),
-    requestsOpen: getSetting('requestsOpen') === '1',
+// ---- Öffentliche API (Gäste), pro Event unter /api/e/:slug -------------------
+const guest = express.Router({ mergeParams: true });
+
+guest.use((req, res, next) => {
+  const ev = SLUG_RE.test(req.params.slug) ? getEventBySlug(req.params.slug) : null;
+  if (!ev) return res.status(404).json({ error: 'Dieses Event gibt es nicht (mehr).', code: 'event_not_found' });
+  req.event = ev;
+  next();
+});
+
+guest.get('/', (req, res) => {
+  res.json({
+    slug: req.event.slug,
+    eventName: req.event.name,
+    requestsOpen: req.event.requestsOpen,
     searchAvailable: spotify.isConfigured() || DEMO_MODE,
     demoMode: DEMO_MODE && !spotify.isConfigured(),
-  };
-}
+  });
+});
 
-const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+guest.get('/stream', (req, res) => openStream(req, res, req.event.id));
 
-// ---- Öffentliche API (Gäste) -------------------------------------------------
-app.get('/api/config', (req, res) => res.json(publicConfig()));
-
-app.get('/api/search', searchLimiter, asyncRoute(async (req, res) => {
+guest.get('/search', searchLimiter, asyncRoute(async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 100);
   if (q.length < 2) return res.json({ items: [] });
   let items;
@@ -180,8 +209,8 @@ app.get('/api/search', searchLimiter, asyncRoute(async (req, res) => {
   else if (DEMO_MODE) items = demo.search(q);
   else return res.status(503).json({ error: 'Die Songsuche ist nicht konfiguriert.' });
 
-  // Status bereits gewünschter Songs mitliefern
-  const known = new Map(listSongs(req.visitorId).map((s) => [s.spotifyId, s]));
+  // Status bereits gewünschter Songs dieses Events mitliefern
+  const known = new Map(listSongs(req.event.id, req.visitorId).map((s) => [s.spotifyId, s]));
   res.json({
     items: items.map((t) => {
       const s = known.get(t.spotifyId);
@@ -190,25 +219,25 @@ app.get('/api/search', searchLimiter, asyncRoute(async (req, res) => {
   });
 }));
 
-app.get('/api/requests', (req, res) => {
-  res.json({ items: listSongs(req.visitorId).map(publicSong) });
+guest.get('/requests', (req, res) => {
+  res.json({ items: listSongs(req.event.id, req.visitorId).map(publicSong) });
 });
 
-app.post('/api/requests', writeLimiter, asyncRoute(async (req, res) => {
-  if (getSetting('requestsOpen') !== '1') {
-    return res.status(403).json({ error: 'Song-Wünsche sind gerade geschlossen.' });
-  }
+guest.post('/requests', writeLimiter, asyncRoute(async (req, res) => {
+  const ev = req.event;
+  if (!ev.requestsOpen) return res.status(403).json({ error: 'Song-Wünsche sind gerade geschlossen.' });
   const spotifyId = String((req.body && req.body.spotifyId) || '');
   if (!/^[A-Za-z0-9]{10,40}$/.test(spotifyId)) return res.status(400).json({ error: 'Ungültige Song-ID.' });
 
-  let song = db.prepare('SELECT id, played FROM songs WHERE spotify_id = ?').get(spotifyId);
+  const findSong = () => db.prepare('SELECT id, played FROM songs WHERE event_id = ? AND spotify_id = ?').get(ev.id, spotifyId);
+  let song = findSong();
 
   if (!song) {
-    // Limit für neue Wünsche pro Gast
+    // Limit für neue Wünsche pro Gast und Event
     const recent = db.prepare(
-      `SELECT COUNT(*) AS c FROM votes WHERE visitor_id = ? AND kind = 'request'
-       AND created_at >= datetime('now', ?)`
-    ).get(req.visitorId, `-${REQUEST_WINDOW_MIN} minutes`).c;
+      `SELECT COUNT(*) AS c FROM votes v JOIN songs s ON s.id = v.song_id
+       WHERE s.event_id = ? AND v.visitor_id = ? AND v.kind = 'request' AND v.created_at >= datetime('now', ?)`
+    ).get(ev.id, req.visitorId, `-${REQUEST_WINDOW_MIN} minutes`).c;
     if (recent >= REQUEST_LIMIT) {
       return res.status(429).json({
         error: `Du hast schon ${REQUEST_LIMIT} Songs in ${REQUEST_WINDOW_MIN} Minuten gewünscht – gib den anderen auch eine Chance 😉`,
@@ -220,49 +249,48 @@ app.post('/api/requests', writeLimiter, asyncRoute(async (req, res) => {
 
     song = transaction(() => {
       db.prepare(
-        `INSERT INTO songs (spotify_id, title, artists, album, image_url, spotify_url, duration_ms, explicit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(spotify_id) DO NOTHING`
-      ).run(track.spotifyId, track.title, track.artists, track.album, track.imageUrl, track.spotifyUrl,
+        `INSERT INTO songs (event_id, spotify_id, title, artists, album, image_url, spotify_url, duration_ms, explicit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id, spotify_id) DO NOTHING`
+      ).run(ev.id, track.spotifyId, track.title, track.artists, track.album, track.imageUrl, track.spotifyUrl,
         track.durationMs ?? null, track.explicit ? 1 : 0);
-      const s = db.prepare('SELECT id, played FROM songs WHERE spotify_id = ?').get(spotifyId);
-      db.prepare(
-        `INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'request') ON CONFLICT DO NOTHING`
-      ).run(s.id, req.visitorId);
+      const s = findSong();
+      db.prepare(`INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'request') ON CONFLICT DO NOTHING`)
+        .run(s.id, req.visitorId);
       return s;
     });
-    broadcast();
+    broadcast(ev.id);
     return res.status(201).json({ ok: true, id: song.id, status: 'created' });
   }
 
   if (song.played) return res.status(409).json({ error: 'Dieser Song wurde bereits gespielt.', id: song.id });
 
-  const r = db.prepare(
-    `INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'request') ON CONFLICT DO NOTHING`
-  ).run(song.id, req.visitorId);
-  if (r.changes) broadcast();
+  const r = db.prepare(`INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'request') ON CONFLICT DO NOTHING`)
+    .run(song.id, req.visitorId);
+  if (r.changes) broadcast(ev.id);
   res.json({ ok: true, id: song.id, status: r.changes ? 'voted' : 'already' });
 }));
 
-app.post('/api/requests/:id/like', writeLimiter, (req, res) => {
-  const id = Number(req.params.id);
-  const song = db.prepare('SELECT id, played FROM songs WHERE id = ?').get(id);
+guest.post('/requests/:id/like', writeLimiter, (req, res) => {
+  const song = db.prepare('SELECT id, played FROM songs WHERE id = ? AND event_id = ?').get(Number(req.params.id), req.event.id);
   if (!song) return res.status(404).json({ error: 'Song nicht gefunden.' });
   if (song.played) return res.status(409).json({ error: 'Dieser Song wurde bereits gespielt.' });
+  const r = db.prepare(`INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'like') ON CONFLICT DO NOTHING`)
+    .run(song.id, req.visitorId);
+  if (r.changes) broadcast(req.event.id);
+  res.json({ ok: true });
+});
+
+guest.delete('/requests/:id/like', writeLimiter, (req, res) => {
   const r = db.prepare(
-    `INSERT INTO votes (song_id, visitor_id, kind) VALUES (?, ?, 'like') ON CONFLICT DO NOTHING`
-  ).run(id, req.visitorId);
-  if (r.changes) broadcast();
+    `DELETE FROM votes WHERE song_id = (SELECT id FROM songs WHERE id = ? AND event_id = ?) AND visitor_id = ? AND kind = 'like'`
+  ).run(Number(req.params.id), req.event.id, req.visitorId);
+  if (r.changes) broadcast(req.event.id);
   res.json({ ok: true });
 });
 
-app.delete('/api/requests/:id/like', writeLimiter, (req, res) => {
-  const r = db.prepare(`DELETE FROM votes WHERE song_id = ? AND visitor_id = ? AND kind = 'like'`)
-    .run(Number(req.params.id), req.visitorId);
-  if (r.changes) broadcast();
-  res.json({ ok: true });
-});
+app.use('/api/e/:slug', guest);
 
-// ---- Admin-API ---------------------------------------------------------------
+// ---- Admin: Anmeldung --------------------------------------------------------
 function requireAdmin(req, res, next) {
   const admin = auth.getSessionAdmin(req.cookies[auth.SESSION_COOKIE]);
   if (!admin) return res.status(401).json({ error: 'Nicht angemeldet.' });
@@ -364,57 +392,18 @@ app.post('/api/admin/password', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/requests', requireAdmin, (req, res) => {
-  const items = listSongs('');
-  res.json({
-    items,
-    stats: {
-      total: items.length,
-      open: items.filter((s) => !s.played).length,
-      played: items.filter((s) => s.played).length,
-      votes: items.reduce((a, s) => a + s.votes, 0),
-    },
-  });
-});
-
-app.post('/api/admin/requests/:id/played', requireAdmin, (req, res) => {
-  const played = Boolean(req.body && req.body.played);
-  const r = db.prepare(
-    `UPDATE songs SET played = ?, played_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?`
-  ).run(played ? 1 : 0, played ? 1 : 0, Number(req.params.id));
-  if (!r.changes) return res.status(404).json({ error: 'Song nicht gefunden.' });
-  broadcast();
-  res.json({ ok: true });
-});
-
-app.delete('/api/admin/requests/:id', requireAdmin, (req, res) => {
-  db.prepare('DELETE FROM songs WHERE id = ?').run(Number(req.params.id));
-  broadcast();
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/reset', requireAdmin, (req, res) => {
-  const scope = req.body && req.body.scope;
-  if (scope === 'played') db.prepare('DELETE FROM songs WHERE played = 1').run();
-  else if (scope === 'all') db.prepare('DELETE FROM songs').run();
-  else return res.status(400).json({ error: 'Unbekannter Bereich.' });
-  broadcast();
-  res.json({ ok: true });
-});
-
-function resolvePublicUrl(req) {
-  const fromSetting = getSetting('publicUrl');
-  if (fromSetting) return fromSetting;
-  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/+$/, '') + '/';
-  return `${req.protocol}://${req.get('host')}/`;
+// ---- Admin: Einstellungen & Events -------------------------------------------
+function publicBaseUrl(req) {
+  const base = getSetting('publicUrl') || process.env.PUBLIC_URL || `${requestOrigin(req)}/`;
+  return base.replace(/\/*$/, '/');
 }
+const eventUrl = (req, ev) => new URL(ev.slug, publicBaseUrl(req)).toString();
 
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
   res.json({
-    eventName: getSetting('eventName'),
-    requestsOpen: getSetting('requestsOpen') === '1',
-    publicUrl: resolvePublicUrl(req),
+    publicUrl: publicBaseUrl(req),
     publicUrlOverride: getSetting('publicUrl') || '',
+    startEventId: startEventId(),
     spotifyConfigured: spotify.isConfigured(),
     demoMode: DEMO_MODE,
   });
@@ -422,11 +411,6 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
 
 app.put('/api/admin/settings', requireAdmin, (req, res) => {
   const b = req.body || {};
-  if (typeof b.eventName === 'string') {
-    const name = b.eventName.trim().slice(0, 80);
-    if (name) setSetting('eventName', name);
-  }
-  if (typeof b.requestsOpen === 'boolean') setSetting('requestsOpen', b.requestsOpen ? '1' : '0');
   if (typeof b.publicUrl === 'string') {
     const u = b.publicUrl.trim();
     if (!u) db.prepare(`DELETE FROM settings WHERE key = 'publicUrl'`).run();
@@ -440,33 +424,175 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
       }
     }
   }
-  broadcast('config');
+  if (b.startEventId !== undefined) {
+    if (b.startEventId === null) db.prepare(`DELETE FROM settings WHERE key = 'startEventId'`).run();
+    else if (getEventById(b.startEventId)) setSetting('startEventId', Number(b.startEventId));
+    else return res.status(400).json({ error: 'Event nicht gefunden.' });
+  }
   res.json({ ok: true });
 });
 
-app.get('/api/admin/qr', requireAdmin, asyncRoute(async (req, res) => {
-  const url = resolvePublicUrl(req);
+app.get('/api/admin/events', requireAdmin, (req, res) => {
+  const start = startEventId();
+  const rows = db.prepare(
+    `SELECT e.id, e.slug, e.name, e.requests_open AS requestsOpen, e.created_at AS createdAt,
+            COUNT(s.id) AS songs, COALESCE(SUM(s.played = 0), 0) AS open
+     FROM events e LEFT JOIN songs s ON s.event_id = e.id
+     GROUP BY e.id ORDER BY e.created_at DESC, e.id DESC`
+  ).all();
+  res.json({
+    items: rows.map((e) => ({ ...e, requestsOpen: Boolean(e.requestsOpen), isStart: e.id === start, url: eventUrl(req, e) })),
+  });
+});
+
+function validateEventInput(b, currentId = null) {
+  const name = typeof b.name === 'string' ? b.name.trim().slice(0, 80) : undefined;
+  if (name !== undefined && !name) return { error: 'Bitte einen Namen eingeben.' };
+  let slug;
+  if (typeof b.slug === 'string') {
+    slug = b.slug.trim().toLowerCase();
+    const err = slugError(slug);
+    if (err) return { error: err };
+    const taken = db.prepare('SELECT id FROM events WHERE slug = ?').get(slug);
+    if (taken && taken.id !== currentId) return { error: `Der Unterlink „/${slug}“ ist schon vergeben.` };
+  }
+  return { name, slug };
+}
+
+app.post('/api/admin/events', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (typeof b.slug !== 'string' || !b.slug.trim()) b.slug = slugify(b.name);
+  const v = validateEventInput(b);
+  if (v.error) return res.status(400).json({ error: v.error });
+  if (!v.name) return res.status(400).json({ error: 'Bitte einen Namen eingeben.' });
+  const id = Number(db.prepare('INSERT INTO events (slug, name) VALUES (?, ?)').run(v.slug, v.name).lastInsertRowid);
+  if (!startEventId() && b.makeStart !== false && db.prepare('SELECT COUNT(*) AS c FROM events').get().c === 1) {
+    setSetting('startEventId', id); // erstes Event automatisch als Startseite
+  }
+  res.status(201).json({ ok: true, event: getEventById(id) });
+});
+
+// Lädt das Event aus :eventId – erst nach requireAdmin, damit Unangemeldete nichts erfahren
+function loadEvent(req, res, next) {
+  const ev = getEventById(req.params.eventId);
+  if (!ev) return res.status(404).json({ error: 'Event nicht gefunden.' });
+  req.event = ev;
+  next();
+}
+
+app.put('/api/admin/events/:eventId', requireAdmin, loadEvent, (req, res) => {
+  const b = req.body || {};
+  const v = validateEventInput(b, req.event.id);
+  if (v.error) return res.status(400).json({ error: v.error });
+  if (v.name !== undefined) db.prepare('UPDATE events SET name = ? WHERE id = ?').run(v.name, req.event.id);
+  if (v.slug !== undefined) db.prepare('UPDATE events SET slug = ? WHERE id = ?').run(v.slug, req.event.id);
+  if (typeof b.requestsOpen === 'boolean') {
+    db.prepare('UPDATE events SET requests_open = ? WHERE id = ?').run(b.requestsOpen ? 1 : 0, req.event.id);
+  }
+  // Gäste laden neu; bei geändertem Unterlink leitet die Gästeseite um
+  const updated = getEventById(req.event.id);
+  broadcast(req.event.id, 'config', { slug: updated.slug });
+  res.json({ ok: true, event: updated });
+});
+
+app.delete('/api/admin/events/:eventId', requireAdmin, loadEvent, (req, res) => {
+  db.prepare('DELETE FROM events WHERE id = ?').run(req.event.id); // Songs + Votes per CASCADE
+  if (Number(getSetting('startEventId')) === req.event.id) {
+    db.prepare(`DELETE FROM settings WHERE key = 'startEventId'`).run();
+  }
+  broadcast(req.event.id, 'deleted');
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/events/:eventId/stream', requireAdmin, loadEvent, (req, res) => openStream(req, res, req.event.id));
+
+app.get('/api/admin/events/:eventId/requests', requireAdmin, loadEvent, (req, res) => {
+  const items = listSongs(req.event.id, '');
+  res.json({
+    items,
+    stats: {
+      total: items.length,
+      open: items.filter((s) => !s.played).length,
+      played: items.filter((s) => s.played).length,
+      votes: items.reduce((a, s) => a + s.votes, 0),
+    },
+  });
+});
+
+app.post('/api/admin/events/:eventId/reset', requireAdmin, loadEvent, (req, res) => {
+  const scope = req.body && req.body.scope;
+  if (scope === 'played') db.prepare('DELETE FROM songs WHERE event_id = ? AND played = 1').run(req.event.id);
+  else if (scope === 'all') db.prepare('DELETE FROM songs WHERE event_id = ?').run(req.event.id);
+  else return res.status(400).json({ error: 'Unbekannter Bereich.' });
+  broadcast(req.event.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/events/:eventId/qr', requireAdmin, loadEvent, asyncRoute(async (req, res) => {
+  const url = eventUrl(req, req.event);
   const format = req.query.format === 'svg' ? 'svg' : 'png';
   const size = Math.min(Math.max(Number(req.query.size) || 1024, 128), 4096);
   const opts = { errorCorrectionLevel: 'H', margin: 2, width: size, color: { dark: '#000000', light: '#ffffff' } };
-  const download = req.query.download === '1';
-  const filename = `dj-song-requester-qr.${format}`;
-  if (download) res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Cache-Control', 'no-store');
-  if (format === 'svg') {
-    res.type('image/svg+xml').send(await QRCode.toString(url, { ...opts, type: 'svg' }));
-  } else {
-    res.type('image/png').send(await QRCode.toBuffer(url, opts));
+  if (req.query.download === '1') {
+    res.setHeader('Content-Disposition', `attachment; filename="qr-${req.event.slug}.${format}"`);
   }
+  res.setHeader('Cache-Control', 'no-store');
+  if (format === 'svg') res.type('image/svg+xml').send(await QRCode.toString(url, { ...opts, type: 'svg' }));
+  else res.type('image/png').send(await QRCode.toBuffer(url, opts));
 }));
 
-// ---- Statische Dateien -------------------------------------------------------
-const pub = path.join(__dirname, '..', 'public');
-app.use(express.static(pub, { extensions: ['html'], maxAge: '1h' }));
-app.get('/admin', (req, res) => res.sendFile(path.join(pub, 'admin', 'index.html')));
-app.get('/healthz', (req, res) => res.json({ ok: true }));
+// Song-Aktionen (Song-IDs sind global eindeutig)
+app.post('/api/admin/requests/:id/played', requireAdmin, (req, res) => {
+  const song = db.prepare('SELECT id, event_id AS eventId FROM songs WHERE id = ?').get(Number(req.params.id));
+  if (!song) return res.status(404).json({ error: 'Song nicht gefunden.' });
+  const played = Boolean(req.body && req.body.played);
+  db.prepare(`UPDATE songs SET played = ?, played_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?`)
+    .run(played ? 1 : 0, played ? 1 : 0, song.id);
+  broadcast(song.eventId);
+  res.json({ ok: true });
+});
 
+app.delete('/api/admin/requests/:id', requireAdmin, (req, res) => {
+  const song = db.prepare('SELECT id, event_id AS eventId FROM songs WHERE id = ?').get(Number(req.params.id));
+  if (song) {
+    db.prepare('DELETE FROM songs WHERE id = ?').run(song.id);
+    broadcast(song.eventId);
+  }
+  res.json({ ok: true });
+});
+
+// ---- Seiten ------------------------------------------------------------------
+const pub = path.join(__dirname, '..', 'public');
+app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Nicht gefunden.' }));
+
+app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(pub, 'admin', 'index.html')));
+// maxAge 0 + ETag: Browser fragen jedes Mal kurz nach (304), bekommen nach Updates aber sofort die neuen Dateien
+app.use(express.static(pub, { index: false, maxAge: 0 }));
+
+// Startseite: zum Startseiten-Event weiterleiten, sonst Hinweis anzeigen
+app.get('/', (req, res) => {
+  const id = startEventId();
+  const ev = id && getEventById(id);
+  if (ev) return res.redirect(302, `/${ev.slug}`);
+  res.sendFile(path.join(pub, 'landing.html'));
+});
+
+// Gästeseite pro Event: /<unterlink>
+app.get('/:slug', (req, res, next) => {
+  const slug = req.params.slug;
+  if (!SLUG_RE.test(slug)) {
+    // Großschreibung oder Schrägstrich am Ende tolerieren
+    const norm = slug.toLowerCase();
+    if (SLUG_RE.test(norm) && getEventBySlug(norm)) return res.redirect(301, `/${norm}`);
+    return next();
+  }
+  if (!getEventBySlug(slug)) return next();
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(pub, 'event.html'));
+});
+
+app.use((req, res) => res.status(404).sendFile(path.join(pub, 'landing.html')));
 
 app.use((err, req, res, _next) => {
   console.error('[error]', err.message);
@@ -474,12 +600,13 @@ app.use((err, req, res, _next) => {
 });
 
 const server = app.listen(PORT, () => {
-  console.log(`DJ Song Requester läuft auf Port ${PORT}`);
+  const events = db.prepare('SELECT slug FROM events ORDER BY id').all().map((e) => `/${e.slug}`);
+  console.log(`DJ Song Requester läuft auf Port ${PORT} – Events: ${events.join(', ') || '(keine)'}`);
   if (DEMO_MODE && !spotify.isConfigured()) console.log('[demo] Demo-Modus aktiv – Suche liefert Beispielsongs.');
 });
 
 function shutdown() {
-  for (const r of sseClients) r.end();
+  for (const set of sseClients.values()) for (const r of set) r.end();
   server.close(() => { db.close(); process.exit(0); });
   setTimeout(() => process.exit(0), 3000).unref();
 }

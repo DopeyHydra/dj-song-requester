@@ -2,25 +2,54 @@
 /* Gästeseite */
 
 const $ = (id) => document.getElementById(id);
-const state = { tab: 'open', items: [], config: null, busy: new Set() };
+const state = {
+  slug: decodeURIComponent(location.pathname.split('/')[1] || '').toLowerCase(),
+  tab: 'open', items: [], config: null, busy: new Set(), gone: false,
+};
+const base = () => `/api/e/${encodeURIComponent(state.slug)}`;
+
+// Event wurde gelöscht oder existiert nicht
+function showGone() {
+  if (state.gone) return;
+  state.gone = true;
+  document.querySelectorAll('[data-live]').forEach((n) => n.classList.add('hidden'));
+  $('goneNotice').classList.remove('hidden');
+  $('eventName').textContent = 'Event beendet';
+  document.title = 'DJ Song Requester';
+}
+
+// Admin hat den Unterlink geändert → Adresse anpassen, ohne neu zu laden
+function onConfigPush(data) {
+  if (data && data.slug && data.slug !== state.slug) {
+    state.slug = data.slug;
+    history.replaceState(null, '', `/${data.slug}`);
+    live.connect(`${base()}/stream`);
+  }
+  loadConfig();
+}
 
 async function loadConfig() {
+  if (state.gone) return;
   try {
-    state.config = await api('/api/config');
+    state.config = await api(base());
     $('eventName').textContent = state.config.eventName;
     document.title = `${state.config.eventName} · Song-Wünsche`;
     $('closedNotice').classList.toggle('hidden', state.config.requestsOpen);
     $('demoNotice').classList.toggle('hidden', !state.config.demoMode);
     $('searchSection').classList.toggle('hidden', !state.config.requestsOpen || !state.config.searchAvailable);
-  } catch { /* nächster Versuch beim nächsten Update */ }
+  } catch (e) {
+    if (e.status === 404) showGone();
+  }
 }
 
 async function loadList() {
+  if (state.gone) return;
   try {
-    const data = await api('/api/requests');
+    const data = await api(`${base()}/requests`);
     state.items = data.items;
     renderList();
-  } catch {
+  } catch (e) {
+    if (e.status === 404) return showGone();
     if (!state.items.length) $('list').replaceChildren(el('div', { class: 'empty' }, 'Liste konnte nicht geladen werden.'));
   }
 }
@@ -75,7 +104,7 @@ async function toggleLike(s) {
   s.likedByMe = !wasLiked; s.mine = !wasLiked; s.votes += wasLiked ? -1 : 1;
   renderList();
   try {
-    await api(`/api/requests/${s.id}/like`, { method: wasLiked ? 'DELETE' : 'POST', body: {} });
+    await api(`${base()}/requests/${s.id}/like`, { method: wasLiked ? 'DELETE' : 'POST', body: {} });
   } catch (e) {
     toast(e.message, 'error');
   } finally {
@@ -114,7 +143,7 @@ async function runSearch() {
   box.classList.remove('hidden');
   box.replaceChildren(el('div', { class: 'empty' }, 'Suche …'));
   try {
-    const data = await api(`/api/search?q=${encodeURIComponent(term)}`);
+    const data = await api(`${base()}/search?q=${encodeURIComponent(term)}`);
     if (seq !== searchSeq) return;
     renderResults(data.items);
   } catch (e) {
@@ -148,7 +177,7 @@ function renderResults(items) {
 async function requestSong(t, btn) {
   btn.disabled = true;
   try {
-    const r = await api('/api/requests', { method: 'POST', body: { spotifyId: t.spotifyId } });
+    const r = await api(`${base()}/requests`, { method: 'POST', body: { spotifyId: t.spotifyId } });
     toast(r.status === 'created' ? `„${t.title}“ ist auf der Wunschliste! 🎶`
       : r.status === 'voted' ? `Deine Stimme für „${t.title}“ zählt! ♥` : 'Den hast du schon gewünscht.', 'success');
     clearSearch();
@@ -176,4 +205,4 @@ document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () 
 // ---------- Start ----------
 loadConfig();
 loadList();
-liveUpdates(loadList, loadConfig);
+const live = liveUpdates({ url: `${base()}/stream`, onChange: loadList, onConfig: onConfigPush, onDeleted: showGone });

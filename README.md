@@ -1,10 +1,16 @@
 # DJ Song Requester
 
-Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen sie sich. Sie sehen die Wunschliste, können Songs liken und erkennen, was schon gespielt wurde. Der DJ sieht im Admin-Panel alle Wünsche, sortiert nach Beliebtheit, und hakt gespielte Songs ab.
+Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen sie sich. Sie sehen die Wunschliste, können Songs liken und erkennen, was schon gespielt wurde. Der DJ sieht im Admin-Panel alle Wünsche, sortiert nach Beliebtheit, und hakt gespielte Songs ab. Für jedes Event gibt es einen eigenen Unterlink, z. B. `songs.example.com/hochzeit-mueller`.
 
 ## Funktionen
 
-**Gästeseite** (`/`)
+**Mehrere Events**
+- Jedes Event hat einen eigenen Unterlink, einen eigenen QR-Code und eine eigene Wunschliste.
+- Events legst du im Admin-Panel unter **Events** an und löschst sie dort auch wieder. Beim Löschen verschwinden alle Wünsche und Likes dieses Events.
+- Ein Event kann als **Startseite** markiert werden. Dann leitet die Hauptadresse ohne Unterlink dorthin weiter, sonst zeigt sie den Hinweis „QR-Code scannen“.
+- Gäste mit offener Seite merken Änderungen sofort: Wird ein Unterlink umbenannt, wechselt ihre Seite auf die neue Adresse. Wird ein Event gelöscht, sehen sie „Event beendet“.
+
+**Gästeseite** (`/<unterlink>`)
 - Spotify-Songsuche (Cover, Interpret, Länge, Explicit-Hinweis)
 - Song wünschen. Ist er schon auf der Liste, zählt der Wunsch als +1.
 - Wunschliste nach Beliebtheit sortiert, Songs mit ♥ liken (und wieder entliken)
@@ -18,9 +24,9 @@ Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen
 - Optional **Single Sign-On per OpenID Connect**, z. B. mit Keycloak. Freigabe über eine Rolle oder einzelne Benutzer, Abmeldung auch beim Identity Provider ([Anleitung](#anmeldung-mit-keycloak-oidc)).
 - Beliebtheits-Counter pro Song, aufgeteilt in „x× gewünscht · y ♥“
 - Songs als gespielt abhaken (und den Haken wieder entfernen), Songs löschen, direkt in Spotify öffnen
-- Wünsche öffnen oder schließen
-- **QR-Code** als Vorschau und als Download (PNG bis 4096 px oder SVG)
-- Einstellungen: Event-Name, öffentliche URL, Passwort ändern, Liste leeren
+- Event oben auswählen. Pro Event: Wünsche öffnen oder schließen, Name und Unterlink ändern, Liste leeren
+- **QR-Code** pro Event als Vorschau und als Download (PNG bis 4096 px oder SVG)
+- Einstellungen: öffentliche Adresse, Passwort ändern
 
 ## Installation auf einem Server
 
@@ -39,7 +45,7 @@ openssl rand -base64 12   # erzeugt ein sicheres Passwort
 nano .env
 ```
 - `ADMIN_PASSWORD` setzen (mindestens 8 Zeichen).
-- `PUBLIC_URL` auf die Adresse setzen, unter der Gäste die Seite erreichen, z. B. `https://songs.example.com` oder `http://<server-ip>:3000`. Daraus wird der QR-Code erzeugt.
+- `PUBLIC_URL` auf die Adresse setzen, unter der Gäste die Seite erreichen, z. B. `https://songs.example.com` oder `http://<server-ip>:3000`. Daraus werden die Event-Links und QR-Codes erzeugt (`https://songs.example.com/<unterlink>`).
 - Für die Songsuche `SPOTIFY_CLIENT_ID` und `SPOTIFY_CLIENT_SECRET` eintragen (siehe unten). Ohne Spotify zum Ausprobieren: `DEMO_MODE=true`.
 
 **3. Starten**
@@ -51,7 +57,9 @@ docker compose logs
 In den Logs sollten `Admin "admin" angelegt` und `DJ Song Requester läuft auf Port 3000` stehen.
 
 **4. Loslegen**
-Das Admin-Panel unter `http://<server>:3000/admin` öffnen. Dort unter **QR-Code** den Code herunterladen und ausdrucken.
+1. Das Admin-Panel unter `http://<server>:3000/admin` öffnen.
+2. Beim ersten Start gibt es schon ein Event, benannt nach `EVENT_NAME`. Unter **Events** legst du weitere an, z. B. „Hochzeit Anna & Ben“. Der Unterlink (`hochzeit-anna-ben`) wird automatisch vorgeschlagen und lässt sich ändern.
+3. Das Event oben auswählen, dann unter **QR-Code** den Code herunterladen und ausdrucken.
 
 Nach dem ersten Start steht der Admin-Zugang verschlüsselt in der Datenbank. `ADMIN_PASSWORD` kann dann aus der `.env` gelöscht werden.
 
@@ -72,6 +80,8 @@ docker compose pull
 docker compose up -d
 ```
 Wünsche, Likes und der Admin-Zugang bleiben dabei im Volume erhalten.
+
+> **Update von einer Version ohne Events:** Die bisherige Wunschliste wird beim ersten Start automatisch zum Event, benannt nach dem bisherigen Event-Namen (z. B. `/sommerfest-2026`). Dieses Event wird als Startseite gesetzt, damit bereits gedruckte QR-Codes weiter funktionieren. Den genauen Unterlink zeigt das Log: `Bestehende Wunschliste wurde ins Event "/…" übernommen`. Wer ihn selbst festlegen will, setzt vor dem Update `DEFAULT_EVENT_SLUG=wunschname` in der `.env`.
 
 ## Anmeldung mit Keycloak (OIDC)
 
@@ -162,7 +172,7 @@ location / {
     proxy_buffering off;            # für Live-Updates (Server-Sent Events)
 }
 ```
-Danach `PUBLIC_URL=https://songs.example.com` in der `.env` setzen (oder im Admin-Panel unter „Einstellungen“), damit der QR-Code auf die richtige Adresse zeigt.
+Danach `PUBLIC_URL=https://songs.example.com` in der `.env` setzen (oder im Admin-Panel unter „Einstellungen“), damit die QR-Codes auf die richtige Adresse zeigen.
 
 Läuft der Proxy auf einem anderen Host oder in einem öffentlichen Netz, muss `TRUST_PROXY` angepasst werden. Der Standard vertraut nur lokalen und privaten Netzen.
 
@@ -181,9 +191,10 @@ docker compose exec app node src/cli.js reset-password admin MeinNeuesPasswort
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | – | Spotify-App-Zugangsdaten |
 | `SPOTIFY_MARKET` | `DE` | Ländermarkt für die Suche |
 | `DEMO_MODE` | `false` | Beispielsongs statt Spotify |
-| `EVENT_NAME` | `DJ Song Requester` | Startwert, später im Panel änderbar |
+| `EVENT_NAME` | `DJ Song Requester` | Name des ersten Events (nur bei Neuinstallation) |
+| `DEFAULT_EVENT_SLUG` | aus dem Namen | Unterlink des ersten Events bzw. der übernommenen Wunschliste |
 | `HOST_PORT` | `3000` | Port auf dem Host |
-| `PUBLIC_URL` | automatisch | Ziel-URL des QR-Codes |
+| `PUBLIC_URL` | automatisch | Basisadresse für Event-Links und QR-Codes (`<PUBLIC_URL>/<unterlink>`) |
 | `REQUEST_LIMIT_PER_GUEST` | `5` | Neue Wünsche pro Person … |
 | `REQUEST_LIMIT_WINDOW_MINUTES` | `15` | … innerhalb dieser Minuten |
 | `COOKIE_SECURE` | `auto` | `auto` / `true` / `false` |

@@ -20,10 +20,11 @@
       </div>
     </header>
 
-    <div id="closedNotice" class="notice hidden">Song-Wünsche sind gerade geschlossen – du kannst aber weiterhin die Liste ansehen.</div>
-    <div id="demoNotice" class="notice hidden">Demo-Modus: Die Suche liefert Beispielsongs (keine Spotify-Zugangsdaten hinterlegt).</div>
+    <div id="goneNotice" class="notice hidden">Dieses Event gibt es nicht mehr – danke fürs Mitfeiern! 🎶</div>
+    <div id="closedNotice" class="notice hidden" data-live>Song-Wünsche sind gerade geschlossen – du kannst aber weiterhin die Liste ansehen.</div>
+    <div id="demoNotice" class="notice hidden" data-live>Demo-Modus: Die Suche liefert Beispielsongs (keine Spotify-Zugangsdaten hinterlegt).</div>
 
-    <section class="search" id="searchSection">
+    <section class="search" id="searchSection" data-live>
       <div class="search-box">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="q" class="input" type="search" placeholder="Song oder Interpret suchen …" autocomplete="off" enterkeyhint="search" aria-label="Song suchen">
@@ -32,12 +33,12 @@
       <div id="results" class="results hidden" role="listbox"></div>
     </section>
 
-    <nav class="tabs" role="tablist">
+    <nav class="tabs" role="tablist" data-live>
       <button class="tab active" data-tab="open" role="tab">Wunschliste <span class="count" id="countOpen"></span></button>
       <button class="tab" data-tab="played" role="tab">Gespielt <span class="count" id="countPlayed"></span></button>
     </nav>
-    <div id="list" class="list"><div class="empty">Lade …</div></div>
-    <p class="hint">Gib Songs, die du auch hören willst, ein ♥ – je mehr Herzen, desto weiter oben landet der Song beim DJ.</p>
+    <div id="list" class="list" data-live><div class="empty">Lade …</div></div>
+    <p class="hint" data-live>Gib Songs, die du auch hören willst, ein ♥ – je mehr Herzen, desto weiter oben landet der Song beim DJ.</p>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

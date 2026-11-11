@@ -52,6 +52,7 @@ h2 { font-size: 18px; margin: 0; }
 /* ---------- Buttons / Inputs ---------- */
 .btn {
   text-decoration: none;
+  color: var(--text);
   border: 1px solid var(--line); background: var(--card-2); border-radius: 10px;
   padding: 9px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
   transition: background .15s, border-color .15s, transform .05s; white-space: nowrap;
@@ -195,3 +196,32 @@ dialog::backdrop { background: rgba(5, 5, 10, .7); backdrop-filter: blur(3px); }
 .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .section.mt { margin-top: 20px; }
 select.input { appearance: none; cursor: pointer; }
+
+/* ---------- Startseite (kein Event) ---------- */
+.landing { text-align: center; padding-top: 18vh; }
+.landing .logo.big { width: 72px; height: 72px; border-radius: 20px; margin: 0 auto 18px; }
+.landing .logo.big svg { width: 36px; height: 36px; }
+.landing .lead { font-size: 18px; margin: 10px 0 4px; }
+
+/* ---------- Event-Auswahl & Verwaltung (Admin) ---------- */
+.event-picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.event-picker select { flex: 1; min-width: 200px; max-width: 420px; font-weight: 600; }
+.event-link { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.event-link a { color: inherit; }
+.event-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.event-row:last-child { border-bottom: 0; }
+.event-row .meta { min-width: 0; flex: 1; }
+.event-row .title { white-space: normal; }
+.pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; background: rgba(139, 92, 255, .18); color: #b69bff; }
+.pill.closed { background: rgba(255, 181, 71, .14); color: #ffd28a; }
+.slug-input { display: flex; align-items: stretch; }
+.slug-input .prefix { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--line); border-right: 0; border-radius: 10px 0 0 10px; background: var(--card-2); color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 13px; white-space: nowrap; flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.slug-input .input { flex: 1; min-width: 0; border-radius: 0 10px 10px 0; font-family: ui-monospace, Consolas, monospace; }
+.check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 14px; cursor: pointer; }
+.empty-state { text-align: center; padding: 40px 20px; }
+.empty-state p { color: var(--muted); }
+.dlg-sub { font-size: 14px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.hint.small { font-size: 12px; margin: 6px 2px 0; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: .95em; background: var(--bg-2); padding: 1px 4px; border-radius: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.row-between { margin-bottom: 4px; }

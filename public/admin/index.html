@@ -40,31 +40,101 @@
         <div><p class="eyebrow">DJ-Pult · <span id="whoami"></span></p><h1 id="eventName">DJ Song Requester</h1></div>
       </div>
       <div class="toolbar">
-        <button id="btnQr" class="btn" type="button">QR-Code</button>
-        <a class="btn" href="/" target="_blank" rel="noopener">Gästeseite</a>
+        <button id="btnEvents" class="btn" type="button">Events</button>
         <button id="btnSettings" class="btn" type="button">Einstellungen</button>
         <button id="btnLogout" class="btn ghost" type="button">Abmelden</button>
       </div>
     </div>
 
-    <div class="stats">
-      <div class="stat"><div class="v" id="stOpen">0</div><div class="l">Offen</div></div>
-      <div class="stat"><div class="v" id="stPlayed">0</div><div class="l">Gespielt</div></div>
-      <div class="stat"><div class="v" id="stTotal">0</div><div class="l">Songs gesamt</div></div>
-      <div class="stat"><div class="v" id="stVotes">0</div><div class="l">Stimmen</div></div>
-    </div>
+    <!-- Kein Event vorhanden -->
+    <section id="noEvents" class="list empty-state hidden">
+      <h2>Noch kein Event</h2>
+      <p>Leg ein Event an – jedes bekommt seinen eigenen Unterlink, QR-Code und eine eigene Wunschliste.</p>
+      <button id="btnFirstEvent" class="btn primary" type="button">Event anlegen</button>
+    </section>
 
-    <div class="row-between">
-      <label class="switch"><input id="requestsOpen" type="checkbox"> <span id="requestsOpenLabel">Wünsche offen</span></label>
-    </div>
+    <section id="eventContent" class="hidden">
+      <div class="event-picker">
+        <label for="eventSelect" class="sr-only">Event auswählen</label>
+        <select id="eventSelect" class="input" aria-label="Event auswählen"></select>
+        <button id="btnEditEvent" class="btn" type="button">Bearbeiten</button>
+        <button id="btnQr" class="btn" type="button">QR-Code</button>
+        <a id="guestLink" class="btn" href="/" target="_blank" rel="noopener">Gästeseite</a>
+      </div>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="open">Offen <span class="count" id="cOpen"></span></button>
-      <button class="tab" data-tab="played">Gespielt <span class="count" id="cPlayed"></span></button>
-      <button class="tab" data-tab="all">Alle</button>
-    </nav>
-    <div id="list" class="list"><div class="empty">Lade …</div></div>
+      <div class="stats">
+        <div class="stat"><div class="v" id="stOpen">0</div><div class="l">Offen</div></div>
+        <div class="stat"><div class="v" id="stPlayed">0</div><div class="l">Gespielt</div></div>
+        <div class="stat"><div class="v" id="stTotal">0</div><div class="l">Songs gesamt</div></div>
+        <div class="stat"><div class="v" id="stVotes">0</div><div class="l">Stimmen</div></div>
+      </div>
+
+      <div class="row-between">
+        <label class="switch"><input id="requestsOpen" type="checkbox"> <span id="requestsOpenLabel">Wünsche offen</span></label>
+        <span class="event-link" id="eventLink"></span>
+      </div>
+
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="open">Offen <span class="count" id="cOpen"></span></button>
+        <button class="tab" data-tab="played">Gespielt <span class="count" id="cPlayed"></span></button>
+        <button class="tab" data-tab="all">Alle</button>
+      </nav>
+      <div id="list" class="list"><div class="empty">Lade …</div></div>
+    </section>
   </main>
+
+  <!-- Events verwalten -->
+  <dialog id="dlgEvents">
+    <div class="dlg-head"><h2>Events</h2><button class="icon-btn" data-close type="button" aria-label="Schließen">✕</button></div>
+    <div class="dlg-body">
+      <form id="newEventForm">
+        <h3 class="dlg-sub">Neues Event</h3>
+        <div class="field"><label for="newName">Name</label><input id="newName" class="input" maxlength="80" placeholder="z. B. Hochzeit Anna &amp; Ben" required></div>
+        <div class="field">
+          <label for="newSlug">Unterlink</label>
+          <div class="slug-input"><span class="prefix" data-base></span><input id="newSlug" class="input" maxlength="50" placeholder="hochzeit-anna-ben" pattern="[a-z0-9](?:[a-z0-9\-]{0,48}[a-z0-9])?" required></div>
+        </div>
+        <label class="check-row"><input id="newStart" type="checkbox"> Als Startseite verwenden (Aufruf ohne Unterlink leitet hierher)</label>
+        <button class="btn primary" type="submit">Event anlegen</button>
+      </form>
+
+      <div class="section mt">
+        <h3>Alle Events</h3>
+        <div id="eventList"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Event bearbeiten -->
+  <dialog id="dlgEditEvent">
+    <div class="dlg-head"><h2>Event bearbeiten</h2><button class="icon-btn" data-close type="button" aria-label="Schließen">✕</button></div>
+    <div class="dlg-body">
+      <form id="editEventForm">
+        <div class="field"><label for="editName">Name</label><input id="editName" class="input" maxlength="80" required></div>
+        <div class="field">
+          <label for="editSlug">Unterlink</label>
+          <div class="slug-input"><span class="prefix" data-base></span><input id="editSlug" class="input" maxlength="50" pattern="[a-z0-9](?:[a-z0-9\-]{0,48}[a-z0-9])?" required></div>
+          <p class="hint small">Achtung: Wird der Unterlink geändert, funktionieren bereits gedruckte QR-Codes nicht mehr.</p>
+        </div>
+        <label class="check-row"><input id="editStart" type="checkbox"> Startseite (Aufruf ohne Unterlink leitet hierher)</label>
+        <button class="btn primary" type="submit">Speichern</button>
+      </form>
+
+      <div class="section mt">
+        <h3>Wunschliste aufräumen</h3>
+        <div class="toolbar">
+          <button id="resetPlayed" class="btn" type="button">Gespielte löschen</button>
+          <button id="resetAll" class="btn" type="button">Liste leeren</button>
+        </div>
+      </div>
+
+      <div class="section mt">
+        <h3>Event löschen</h3>
+        <p class="hint small">Löscht das Event mit allen Wünschen und Likes. Der Unterlink ist danach nicht mehr erreichbar.</p>
+        <button id="deleteEvent" class="btn danger" type="button">Event löschen</button>
+      </div>
+    </div>
+  </dialog>
 
   <!-- QR-Dialog -->
   <dialog id="dlgQr">
@@ -85,7 +155,7 @@
         <a id="qrPng" class="btn primary" href="#">PNG herunterladen</a>
         <a id="qrSvg" class="btn" href="#">SVG herunterladen</a>
       </div>
-      <p class="hint">Stimmt die Adresse nicht (z. B. hinter einem Reverse Proxy)? In den Einstellungen die öffentliche URL festlegen.</p>
+      <p class="hint">Stimmt die Adresse nicht (z. B. hinter einem Reverse Proxy)? In den Einstellungen die öffentliche Adresse festlegen.</p>
     </div>
   </dialog>
 
@@ -94,8 +164,11 @@
     <div class="dlg-head"><h2>Einstellungen</h2><button class="icon-btn" data-close type="button" aria-label="Schließen">✕</button></div>
     <div class="dlg-body">
       <form id="settingsForm">
-        <div class="field"><label for="setEventName">Name der Veranstaltung</label><input id="setEventName" class="input" maxlength="80"></div>
-        <div class="field"><label for="setPublicUrl">Öffentliche URL der Gästeseite (leer = automatisch)</label><input id="setPublicUrl" class="input" placeholder="https://songs.example.com/"></div>
+        <div class="field">
+          <label for="setPublicUrl">Öffentliche Adresse (leer = automatisch)</label>
+          <input id="setPublicUrl" class="input" placeholder="https://songs.example.com/">
+          <p class="hint small">Basis für alle Event-Links und QR-Codes, z. B. <code>https://songs.example.com/</code> → <code>https://songs.example.com/&lt;unterlink&gt;</code></p>
+        </div>
         <button class="btn primary" type="submit">Speichern</button>
       </form>
 
@@ -107,14 +180,6 @@
           <div class="field"><label for="pwNew2">Neues Passwort wiederholen</label><input id="pwNew2" class="input" type="password" autocomplete="new-password" minlength="8" required></div>
           <button class="btn" type="submit">Passwort ändern</button>
         </form>
-      </div>
-
-      <div class="section mt">
-        <h3>Liste aufräumen</h3>
-        <div class="toolbar">
-          <button id="resetPlayed" class="btn" type="button">Gespielte löschen</button>
-          <button id="resetAll" class="btn danger" type="button">Alles löschen (neues Event)</button>
-        </div>
       </div>
     </div>
   </dialog>

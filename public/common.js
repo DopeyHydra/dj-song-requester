@@ -70,23 +70,37 @@ async function api(path, options = {}) {
 let toastTimer;
 function toast(msg, type) {
   const t = document.getElementById('toast');
+  // Ein offener Dialog liegt in der obersten Ebene – Meldung dort anzeigen, sonst wäre sie verdeckt
+  const host = document.querySelector('dialog[open]') || document.body;
+  if (t.parentNode !== host) host.append(t);
   t.textContent = msg;
   t.className = `toast show ${type || ''}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = 'toast'; }, 3200);
 }
 
-// Live-Updates per Server-Sent Events, mit Polling als Rückfallebene
-function liveUpdates(onChange, onConfig) {
-  let debounce;
+// Live-Updates per Server-Sent Events, mit Polling als Rückfallebene.
+// Rückgabe: { connect(url) } – zum Wechseln des Streams (z. B. anderes Event).
+function liveUpdates({ url, onChange, onConfig, onDeleted }) {
+  let debounce, es = null;
   const trigger = () => { clearTimeout(debounce); debounce = setTimeout(onChange, 150); };
-  try {
-    const es = new EventSource('/api/events');
-    es.addEventListener('changed', trigger);
-    es.addEventListener('config', () => { onConfig && onConfig(); trigger(); });
-  } catch { /* ignorieren */ }
+  const parse = (e) => { try { return JSON.parse(e.data || '{}'); } catch { return {}; } };
+
+  function connect(nextUrl) {
+    if (es) { es.close(); es = null; }
+    if (!nextUrl) return;
+    try {
+      es = new EventSource(nextUrl);
+      es.addEventListener('changed', trigger);
+      es.addEventListener('config', (e) => { onConfig && onConfig(parse(e)); trigger(); });
+      es.addEventListener('deleted', () => { onDeleted && onDeleted(); });
+    } catch { /* Polling reicht als Rückfallebene */ }
+  }
+
+  connect(url);
   setInterval(onChange, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) onChange(); });
+  return { connect };
 }
 
 function fmtDuration(ms) {
