@@ -21,26 +21,56 @@ Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen
 - **QR-Code** als Vorschau und als Download (PNG bis 4096 px oder SVG)
 - Einstellungen: Event-Name, öffentliche URL, Passwort ändern, Liste leeren
 
-## Schnellstart
+## Installation auf einem Server
 
-1. **Spotify-App anlegen** unter <https://developer.spotify.com/dashboard>: „Create app“, eine beliebige Redirect-URI (z. B. `http://127.0.0.1/callback`), API „Web API“ auswählen. Danach **Client ID** und **Client Secret** kopieren.
-   > Spotify verlangt für Apps im Development Mode inzwischen ein Premium-Konto beim App-Besitzer. Die Songsuche nutzt nur den Client-Credentials-Flow. Gäste brauchen kein Spotify-Konto.
+Der Quellcode wird auf dem Server nicht gebraucht. Das fertige Image liegt auf Docker Hub als [`dopeyhydra/dj_song_requester`](https://hub.docker.com/r/dopeyhydra/dj_song_requester). Es läuft auf x86/amd64, also nicht auf ARM-Geräten wie dem Raspberry Pi.
 
-2. **Konfiguration anlegen:**
-   ```bash
-   cp .env.example .env
-   ```
-   In `.env` mindestens `ADMIN_PASSWORD`, `SPOTIFY_CLIENT_ID` und `SPOTIFY_CLIENT_SECRET` setzen.
-   Zum Ausprobieren ohne Spotify: `DEMO_MODE=true`.
+**1. Ordner anlegen und die beiden Dateien herunterladen**
+```bash
+mkdir -p ~/dj-song-requester && cd ~/dj-song-requester
+curl -fsSLO https://raw.githubusercontent.com/DopeyHydra/dj-song-requester/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/DopeyHydra/dj-song-requester/main/.env.example -o .env
+```
 
-3. **Starten:**
-   ```bash
-   docker compose up -d --build
-   ```
+**2. `.env` anpassen**
+```bash
+openssl rand -base64 12   # erzeugt ein sicheres Passwort
+nano .env
+```
+- `ADMIN_PASSWORD` setzen (mindestens 8 Zeichen).
+- `PUBLIC_URL` auf die Adresse setzen, unter der Gäste die Seite erreichen, z. B. `https://songs.example.com` oder `http://<server-ip>:3000`. Daraus wird der QR-Code erzeugt.
+- Für die Songsuche `SPOTIFY_CLIENT_ID` und `SPOTIFY_CLIENT_SECRET` eintragen (siehe unten). Ohne Spotify zum Ausprobieren: `DEMO_MODE=true`.
 
-4. Das Admin-Panel unter `http://<server>:3000/admin` öffnen. Dort unter **QR-Code** den Code herunterladen und ausdrucken.
+**3. Starten**
+```bash
+docker compose pull
+docker compose up -d
+docker compose logs
+```
+In den Logs sollten `Admin "admin" angelegt` und `DJ Song Requester läuft auf Port 3000` stehen.
+
+**4. Loslegen**
+Das Admin-Panel unter `http://<server>:3000/admin` öffnen. Dort unter **QR-Code** den Code herunterladen und ausdrucken.
 
 Nach dem ersten Start steht der Admin-Zugang verschlüsselt in der Datenbank. `ADMIN_PASSWORD` kann dann aus der `.env` gelöscht werden.
+
+### Spotify-Zugangsdaten
+
+1. Auf <https://developer.spotify.com/dashboard> eine App anlegen („Create app“).
+2. Als Redirect-URI `http://127.0.0.1/callback` eintragen. Sie wird nicht benutzt, ist aber Pflicht.
+3. Bei der API „Web API“ anhaken.
+4. **Client ID** und **Client Secret** in die `.env` kopieren und `DEMO_MODE=false` setzen.
+5. Mit `docker compose up -d` neu starten.
+
+> Spotify verlangt für Apps im Development Mode ein Premium-Konto beim App-Besitzer. Die Songsuche nutzt nur den Client-Credentials-Flow, Gäste brauchen also kein Spotify-Konto.
+
+## Update
+
+```bash
+docker compose pull
+docker compose up -d
+```
+Wünsche, Likes und der Admin-Zugang bleiben dabei im Volume erhalten.
 
 ## Hosting hinter einem Reverse Proxy (empfohlen: HTTPS)
 
@@ -98,4 +128,20 @@ docker compose cp app:/data/dj-song-requester.db ./backup.db
 
 Node.js 24 (Express, eingebautes `node:sqlite`, `qrcode`), Frontend ohne Framework, ein einziger Container. Für Live-Updates nutzt die App Server-Sent Events und fragt als Rückfallebene alle 20 s per Polling ab.
 
-Lokal ohne Docker: `npm install`, dann `ADMIN_PASSWORD=… DEMO_MODE=true npm start`.
+## Entwicklung
+
+Aus dem Quellcode bauen und starten. `docker-compose.build.yml` ergänzt dafür nur `build: .`:
+```bash
+git clone https://github.com/DopeyHydra/dj-song-requester.git
+cd dj-song-requester
+cp .env.example .env      # ADMIN_PASSWORD setzen, ggf. DEMO_MODE=true
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Ein neues Image auf Docker Hub veröffentlichen:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml build
+docker compose push
+```
+
+Ohne Docker: `npm install`, dann `ADMIN_PASSWORD=… DEMO_MODE=true npm start`. Dafür ist Node.js 22.13 oder neuer nötig.

@@ -1,0 +1,5 @@
+# Nur für Entwicklung: baut das Image aus dem Quellcode statt es von Docker Hub zu laden.
+# Nutzung: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  app:
+    build: .
