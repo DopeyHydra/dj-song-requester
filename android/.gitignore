@@ -1,0 +1,12 @@
+# Build-Ausgaben
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+# Signatur-Schlüssel – niemals ins Repo, aber gut sichern!
+release.jks
+keystore.properties
+.idea/
+*.iml

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DJ Song Requester</string>
+    <string name="setup_title">DJ Song Requester</string>
+    <string name="setup_subtitle">Mit welchem Server möchtest du dich verbinden?</string>
+    <string name="setup_hint">Server-Adresse</string>
+    <string name="setup_example">z. B. songs.example.com oder 192.168.1.10:3000</string>
+    <string name="setup_connect">Verbinden</string>
+    <string name="setup_checking">Verbinde …</string>
+    <string name="err_empty">Bitte eine Server-Adresse eingeben.</string>
+    <string name="err_invalid">Das ist keine gültige Adresse.</string>
+    <string name="err_unreachable">Server nicht erreichbar: %1$s</string>
+    <string name="err_not_djsr">Unter dieser Adresse läuft kein DJ Song Requester.</string>
+    <string name="menu_reload">Neu laden</string>
+    <string name="menu_guest">Gästeseite öffnen</string>
+    <string name="menu_change_server">Server wechseln</string>
+    <string name="change_server_title">Server wechseln?</string>
+    <string name="change_server_msg">Du wirst abgemeldet und kannst eine neue Server-Adresse eingeben.</string>
+    <string name="yes_change">Wechseln</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="error_title">Keine Verbindung zum Server</string>
+    <string name="error_retry">Erneut versuchen</string>
+    <string name="download_started">Download gestartet: %1$s</string>
+    <string name="download_failed">Download fehlgeschlagen.</string>
+    <string name="download_permission">Ohne Speicher-Berechtigung kann der QR-Code nicht gespeichert werden.</string>
+    <string name="no_app">Keine App zum Öffnen gefunden.</string>
+</resources>

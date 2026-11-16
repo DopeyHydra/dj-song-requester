@@ -28,6 +28,9 @@ Gäste scannen einen QR-Code, suchen Songs aus dem Spotify-Katalog und wünschen
 - **QR-Code** pro Event als Vorschau und als Download (PNG bis 4096 px oder SVG)
 - Einstellungen: öffentliche Adresse, Passwort ändern
 
+**Android-App** für Handy und Tablet
+- Server-Adresse beim Start eingeben, dann wie gewohnt anmelden (Passwort oder SSO). Details und Download-/Build-Anleitung: [android/README.md](android/README.md)
+
 ## Installation auf einem Server
 
 Der Quellcode wird auf dem Server nicht gebraucht. Das fertige Image liegt auf Docker Hub als [`dopeyhydra/dj_song_requester`](https://hub.docker.com/r/dopeyhydra/dj_song_requester). Es läuft auf x86/amd64, also nicht auf ARM-Geräten wie dem Raspberry Pi.
